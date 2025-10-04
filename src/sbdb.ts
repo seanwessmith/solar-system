@@ -105,6 +105,8 @@ export async function fetchSbdbOrbit(sstr: string): Promise<BodyDef> {
       aAU: aAU,
       periodDays: periodDays,
       e,
+      epochJD,
+      tpJD,
       incDeg,
       ascNodeDeg,
       argPeriDeg,

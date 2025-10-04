@@ -8,6 +8,10 @@ export interface OrbitDef {
   // Mean motion (deg/day). Used especially for hyperbolic objects
   // or when no period is available.
   meanMotionDegPerDay?: number;
+  // Epoch of the provided elements (Julian Date, TDB)
+  epochJD?: number;
+  // Time of perihelion passage (Julian Date, TDB)
+  tpJD?: number;
   // Inclination (deg) relative to ecliptic (J2000)
   incDeg?: number;
   // Longitude of ascending node Ω (deg)

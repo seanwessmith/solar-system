@@ -2,6 +2,7 @@ import { BODIES, J2000_EPOCH_MS, MS_PER_DAY } from "./constants";
 import type { BodyDef, BodyState, SystemSnapshot } from "./types";
 
 const TAU = Math.PI * 2;
+const K_RAD_PER_DAY = 0.01720209895; // Gaussian gravitational constant
 
 function degToRad(d: number): number {
   return (d * Math.PI) / 180;
@@ -71,12 +72,16 @@ export function stateForBody(def: BodyDef, tDays: number): BodyState {
   const i = degToRad(o.incDeg ?? 0);
   const Ω = degToRad(o.ascNodeDeg ?? 0);
   const ω = degToRad(o.argPeriDeg ?? 0);
-  const n = o.meanMotionDegPerDay != null ? degToRad(o.meanMotionDegPerDay) : TAU / o.periodDays; // rad/day
+  const aAbs = Math.abs(a);
+  // Base mean motion in rad/day
+  const nBase = o.meanMotionDegPerDay != null
+    ? degToRad(o.meanMotionDegPerDay)
+    : (o.periodDays ? TAU / o.periodDays : K_RAD_PER_DAY / Math.pow(aAbs, 1.5));
 
   const M0 = meanAnomalyAtEpoch(def);
-  if (M0 == null) {
+  if (M0 == null && !(e >= 1 && o.tpJD != null)) {
     // Fallback to circular uniform motion if insufficient elements
-    const theta = normAngle((tDays * n) + (o.phase ?? 0));
+    const theta = normAngle((tDays * nBase) + (o.phase ?? 0));
     return {
       id: def.id,
       name: def.name,
@@ -89,9 +94,10 @@ export function stateForBody(def: BodyDef, tDays: number): BodyState {
     };
   }
 
-  const M = normAngle(M0 + n * tDays);
   let r: number, ν: number;
   if (e < 1) {
+    // Elliptical: wrap M to [0, 2π)
+    const M = normAngle((M0 ?? 0) + nBase * tDays);
     const E = solveKepler(M, e);
     const cosE = Math.cos(E);
     const sinE = Math.sin(E);
@@ -99,7 +105,10 @@ export function stateForBody(def: BodyDef, tDays: number): BodyState {
     ν = Math.atan2(sqrt1me2 * sinE, cosE - e);
     r = a * (1 - e * cosE);
   } else {
-    const aAbs = Math.abs(a);
+    // Hyperbolic: prefer time from perihelion using tpJD
+    const tSincePeriDays = o.tpJD != null ? (tDays - (o.tpJD - 2451545.0)) : tDays;
+    const nH = K_RAD_PER_DAY / Math.pow(aAbs, 1.5); // rad/day
+    const M = (M0 != null && o.tpJD == null) ? (M0 + nBase * tDays) : (nH * tSincePeriDays);
     const H = solveKeplerHyperbolic(M, e);
     const cH = Math.cosh(H);
     const sH = Math.sinh(H);
