@@ -228,3 +228,53 @@ code {
   );
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
+
+/* NEO panel */
+.neo-panel {
+  width: 100%;
+  max-width: 980px;
+  margin: 0.5rem auto 2rem;
+  background: #1a1a1a;
+  border: 2px solid #fbf0df;
+  border-radius: 12px;
+  padding: 0.75rem;
+  box-sizing: border-box;
+}
+.neo-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.neo-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+}
+.neo-summary {
+  opacity: 0.8;
+  margin-bottom: 0.25rem;
+}
+.neo-item {
+  display: grid;
+  grid-template-columns: auto auto auto auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.neo-name {
+  font-weight: 700;
+}
+.neo-hazard {
+  color: #1a1a1a;
+  background: #ffcc00;
+  border-radius: 6px;
+  padding: 0.1rem 0.35rem;
+  font-weight: 800;
+}
+.neo-meta {
+  opacity: 0.9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}

@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { daysSinceEpochNow, maxOrbitAU, snapshotAtDays } from "./model";
+import {
+  BODIES,
+  daysSinceEpochFromDate,
+  daysSinceEpochNow,
+  snapshotAtDays,
+  stateForBody,
+} from "./model";
+import type { BodyDef } from "./types";
+import { J2000_EPOCH_MS, MS_PER_DAY } from "./constants";
 
 type Props = {
   width?: number;
   height?: number;
+  overlays?: BodyDef[];
 };
 
 function useAnimationFrame(callback: (dtSec: number) => void, active = true) {
@@ -22,23 +31,36 @@ function useAnimationFrame(callback: (dtSec: number) => void, active = true) {
   }, [callback, active]);
 }
 
-export function SolarSystem({ width = 800, height = 600 }: Props) {
+export function SolarSystem({
+  width = 800,
+  height = 600,
+  overlays = [],
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [paused, setPaused] = useState(false);
-  const [speed, setSpeed] = useState(40); // simulated days per real second
+  const [speed, setSpeed] = useState(1); // simulated days per real second
   const [scale, setScale] = useState(1); // UI scale multiplier
   const [tiltDeg, setTiltDeg] = useState(20); // degrees to tilt the ecliptic
-  const [tDays, setTDays] = useState(() => daysSinceEpochNow());
+  const [tDays, setTDays] = useState(() => {
+    const d = new Date();
+    d.setUTCMonth(d.getUTCMonth() - 1);
+    return daysSinceEpochFromDate(d);
+  });
 
   const padding = 40;
-  const maxAU = useMemo(() => maxOrbitAU(), []);
-
-  useAnimationFrame(
-    dt => {
-      if (!paused) setTDays(t => t + dt * speed);
-    },
-    true
+  const bodies = useMemo(() => [...BODIES, ...overlays], [overlays]);
+  const maxAU = useMemo(
+    () =>
+      bodies.reduce(
+        (m, b) => (b.orbit ? Math.max(m, Math.abs(b.orbit.aAU)) : m),
+        0
+      ),
+    [bodies]
   );
+
+  useAnimationFrame((dt) => {
+    if (!paused) setTDays((t) => t + dt * speed);
+  }, true);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -63,23 +85,55 @@ export function SolarSystem({ width = 800, height = 600 }: Props) {
     ctx.save();
     ctx.translate(cx, cy);
 
-    // Draw orbits
+    // Draw orbits (sampled with elements, projected with tilt)
     ctx.globalAlpha = 0.3;
     ctx.strokeStyle = "#888";
-    snap.bodies.forEach(b => {
-      if (!b.orbitRadiusAU) return;
-      const r = b.orbitRadiusAU * pxPerAU;
+    const SAMPLES = 256;
+    bodies.forEach((def) => {
+      const o = def.orbit;
+      if (!o || def.isSun) return;
+      const a = Math.abs(o.aAU);
+      const e = o.e ?? 0;
+      const i = ((o.incDeg ?? 0) * Math.PI) / 180;
+      const Ω = ((o.ascNodeDeg ?? 0) * Math.PI) / 180;
+      const ω = ((o.argPeriDeg ?? 0) * Math.PI) / 180;
+
+      const cosΩ = Math.cos(Ω),
+        sinΩ = Math.sin(Ω);
+      const cosi = Math.cos(i),
+        sini = Math.sin(i);
+
       ctx.beginPath();
-      // Elliptical orbit due to tilt (compress Y by cosT)
-      ctx.ellipse(0, 0, r, r * cosT, 0, 0, Math.PI * 2);
+      // Elliptical: full 0..2π, Hyperbolic: limited range around periapsis
+      const startNu = e < 1 ? 0 : -Math.PI * 0.75;
+      const endNu = e < 1 ? Math.PI * 2 : Math.PI * 0.75;
+      for (let k = 0; k <= SAMPLES; k++) {
+        const t = k / SAMPLES;
+        const ν = startNu + t * (endNu - startNu);
+        const r =
+          e < 1
+            ? (a * (1 - e * e)) / (1 + e * Math.cos(ν))
+            : (a * (e * e - 1)) / (1 + e * Math.cos(ν));
+        const u = ω + ν;
+        const cosu = Math.cos(u),
+          sinu = Math.sin(u);
+        const x = r * (cosΩ * cosu - sinΩ * sinu * cosi);
+        const y = r * (sinΩ * cosu + cosΩ * sinu * cosi);
+        const z = r * (sinu * sini);
+        const sx = x * pxPerAU;
+        const sy = (y * cosT - z * Math.sin(tiltRad)) * pxPerAU;
+        if (k === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
       ctx.stroke();
     });
     ctx.globalAlpha = 1;
 
-    // Draw bodies
-    snap.bodies.forEach(b => {
+    // Draw bodies: planets + overlays
+    const states = bodies.map((b) => stateForBody(b, tDays));
+    states.forEach((b) => {
       const x = b.xAU * pxPerAU;
-      const y = b.yAU * pxPerAU * cosT; // apply tilt
+      const y = (b.yAU * cosT - (b.zAU ?? 0) * Math.sin(tiltRad)) * pxPerAU; // tilt projection
       const r = b.drawRadiusPx;
       ctx.beginPath();
       ctx.fillStyle = b.color;
@@ -107,27 +161,61 @@ export function SolarSystem({ width = 800, height = 600 }: Props) {
     ctx.fillText(`speed = ${speed.toFixed(0)} d/s`, 8, 48);
     ctx.fillText(`scale = ${scale.toFixed(2)}x`, 8, 64);
     ctx.fillText(`tilt = ${tiltDeg.toFixed(0)}°`, 8, 80);
-  }, [tDays, speed, scale, tiltDeg, maxAU]);
+    const simDate = new Date(J2000_EPOCH_MS + tDays * MS_PER_DAY);
+    ctx.fillText(`UTC: ${simDate.toISOString().replace(".000Z", "Z")}`, 8, 96);
+  }, [tDays, speed, scale, tiltDeg, maxAU, bodies]);
 
   return (
     <div className="solar-wrap">
       <div className="controls">
-        <button className="btn" onClick={() => setPaused(v => !v)}>{paused ? "Resume" : "Pause"}</button>
+        <button className="btn" onClick={() => setPaused((v) => !v)}>
+          {paused ? "Resume" : "Pause"}
+        </button>
         <label className="ctrl">
-          Speed: <input type="range" min={1} max={200} value={speed} onChange={e => setSpeed(Number(e.target.value))} />
+          Speed:{" "}
+          <input
+            type="range"
+            min={1}
+            max={200}
+            value={speed}
+            onChange={(e) => setSpeed(Number(e.target.value))}
+          />
           <span className="mono">{speed} d/s</span>
         </label>
         <label className="ctrl">
-          Scale: <input type="range" min={0.3} max={10} step={0.1} value={scale} onChange={e => setScale(Number(e.target.value))} />
+          Scale:{" "}
+          <input
+            type="range"
+            min={0.3}
+            max={10}
+            step={0.1}
+            value={scale}
+            onChange={(e) => setScale(Number(e.target.value))}
+          />
           <span className="mono">{scale.toFixed(2)}x</span>
         </label>
         <label className="ctrl">
-          Tilt: <input type="range" min={0} max={80} step={1} value={tiltDeg} onChange={e => setTiltDeg(Number(e.target.value))} />
+          Tilt:{" "}
+          <input
+            type="range"
+            min={0}
+            max={80}
+            step={1}
+            value={tiltDeg}
+            onChange={(e) => setTiltDeg(Number(e.target.value))}
+          />
           <span className="mono">{tiltDeg}°</span>
         </label>
-        <button className="btn" onClick={() => setTDays(daysSinceEpochNow())}>Now</button>
+        <button className="btn" onClick={() => setTDays(daysSinceEpochNow())}>
+          Now
+        </button>
       </div>
-      <canvas ref={canvasRef} width={width} height={height} className="solar-canvas" />
+      <canvas
+        ref={canvasRef}
+        width={width}
+        height={height}
+        className="solar-canvas"
+      />
     </div>
   );
 }
